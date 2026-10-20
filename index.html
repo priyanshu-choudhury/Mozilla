@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- Strict Content Security Policy (CSP) for XSS Mitigation -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://images.unsplash.com; connect-src 'self';" />
+  <title>CampusPulse // Encrypted Swipe-to-RSVP</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background-color: #09090b;
+      color: #fafafa;
+      overflow-x: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .font-mono-code {
+      font-family: var(--font-mono);
+    }
+    .card-stack {
+      perspective: 1200px;
+      position: relative;
+      width: 100%;
+      height: 490px;
+    }
+    .swipe-card {
+      position: absolute;
+      inset: 0;
+      border-radius: 1.5rem;
+      background: #18181b;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75);
+      touch-action: none;
+      will-change: transform, opacity;
+      transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+    .swipe-card.dragging {
+      transition: none !important;
+      cursor: grabbing;
+    }
+    .stamp-badge {
+      position: absolute;
+      top: 28px;
+      padding: 6px 16px;
+      border-radius: 8px;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      font-size: 1.25rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 30;
+      border-width: 3px;
+    }
+    .stamp-in {
+      left: 24px;
+      color: #4ade80;
+      border-color: #4ade80;
+      background: rgba(20, 83, 45, 0.75);
+      transform: rotate(-14deg);
+    }
+    .stamp-skip {
+      right: 24px;
+      color: #f87171;
+      border-color: #f87171;
+      background: rgba(127, 29, 29, 0.75);
+      transform: rotate(14deg);
+    }
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #09090b; }
+    ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 9999px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-zinc-900 via-zinc-950 to-black">
+
+  <!-- Top Navigation & Encryption Status -->
+  <header class="w-full max-w-5xl mx-auto px-4 pt-5 pb-3 flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-orange-500/10 border border-orange-500/40 flex items-center justify-center text-orange-400 font-mono-code font-bold text-lg shadow-inner">
+        ⚡
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-extrabold text-lg tracking-tight text-white">CAMPUS<span class="text-orange-500">PULSE</span></h1>
+          <span id="crypto-status" class="px-2 py-0.5 text-[10px] font-mono-code uppercase tracking-wider bg-emerald-950/90 text-emerald-400 border border-emerald-700/60 rounded-full flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            AES-256-GCM Vault
+          </span>
+        </div>
+        <p class="text-xs text-zinc-400">Swipe-to-RSVP • Zero-Trust Encrypted Local Persistence</p>
+      </div>
+    </div>
+
+    <!-- View Switcher & Reset -->
+    <div class="flex items-center gap-2">
+      <button id="tab-deck" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-orange-500 text-zinc-950 transition">
+        Swipe Deck
+      </button>
+      <button id="tab-rsvps" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-zinc-900 text-zinc-300 border border-zinc-800 hover:border-zinc-700 flex items-center gap-1.5 transition">
+        <span>My RSVPs</span>
+        <span id="rsvp-counter" class="px-1.5 py-0.2 rounded-full text-[11px] font-mono-code bg-zinc-800 text-orange-400">0</span>
+      </button>
+      <button id="btn-reset" title="Wipe Encrypted Vault & Reset Deck" class="p-1.5 rounded-lg bg-zinc-900 hover:bg-red-950/60 text-zinc-400 hover:text-red-400 border border-zinc-800 transition text-xs font-mono-code">
+        Reset
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="flex-1 w-full max-w-5xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+
+    <!-- Left/Center Column: Filter + Swipe Deck -->
+    <section id="deck-section" class="lg:col-span-7 flex flex-col items-center w-full max-w-md mx-auto">
+      
+      <!-- Category Filter Pills -->
+      <div id="category-bar" class="w-full flex items-center gap-2 overflow-x-auto pb-3 mb-3 no-scrollbar">
+        <!-- Populated dynamically via safe DOM methods -->
+      </div>
+
+      <!-- Deck Meta Status -->
+      <div class="w-full flex items-center justify-between text-xs font-mono-code text-zinc-400 mb-3 px-1">
+        <span id="deck-remaining">REMAINING: 0</span>
+        <span id="integrity-hash" class="truncate max-w-[200px] text-zinc-500">SHA256: INITIALIZING...</span>
+      </div>
+
+      <!-- Interactive Card Stack -->
+      <div id="card-stack" class="card-stack">
+        <!-- Cards rendered dynamically -->
+      </div>
+
+      <!-- Control Dock (Left / Undo / Right) -->
+      <div class="w-full flex items-center justify-center gap-5 mt-6">
+        <button id="btn-skip" aria-label="Skip Event (Left Arrow)" class="group w-14 h-14 rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-red-500/60 hover:bg-red-950/30 flex items-center justify-center text-red-400 shadow-lg transition transform active:scale-95 disabled:opacity-40 disabled:pointer-events-none">
+          <svg class="w-6 h-6 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+        <button id="btn-undo" aria-label="Undo Last Swipe (Ctrl+Z)" class="px-4 h-11 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-amber-500/50 text-amber-400 font-mono-code text-xs font-semibold flex items-center gap-1.5 shadow-md transition active:scale-95 disabled:opacity-30 disabled:pointer-events-none">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+          </svg>
+          <span>UNDO</span>
+        </button>
+
+        <button id="btn-rsvp" aria-label="RSVP I'm In (Right Arrow)" class="group w-14 h-14 rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-emerald-500/60 hover:bg-emerald-950/30 flex items-center justify-center text-emerald-400 shadow-lg transition transform active:scale-95 disabled:opacity-40 disabled:pointer-events-none">
+          <svg class="w-6 h-6 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+        </button>
+      </div>
+
+      <p class="mt-4 text-[11px] font-mono-code text-zinc-500 text-center">
+        Drag card or press <kbd class="px-1.5 py-0.5 bg-zinc-900 border border-zinc-800 rounded text-zinc-300">←</kbd> Skip • <kbd class="px-1.5 py-0.5 bg-zinc-900 border border-zinc-800 rounded text-zinc-300">→</kbd> I'm In • <kbd class="px-1.5 py-0.5 bg-zinc-900 border border-zinc-800 rounded text-zinc-300">Ctrl+Z</kbd> Undo
+      </p>
+    </section>
+
+    <!-- Right Column: Live RSVP Vault & Countdown Badges -->
+    <aside id="rsvp-section" class="lg:col-span-5 w-full bg-zinc-900/50 border border-zinc-800/90 rounded-2xl p-5 flex flex-col h-[600px]">
+      <div class="flex items-center justify-between pb-3 mb-4 border-b border-zinc-800">
+        <div>
+          <h2 class="text-sm font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-2">
+            <span>RSVP'd Events</span>
+            <span class="text-[10px] font-mono-code px-2 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/30">LIVE COUNTDOWN</span>
+          </h2>
+          <p class="text-xs text-zinc-400 mt-0.5">Persisted across restarts via AES-GCM ciphertext</p>
+        </div>
+      </div>
+
+      <div id="rsvp-list" class="flex-1 overflow-y-auto space-y-3 pr-1">
+        <!-- Populated dynamically -->
+      </div>
+
+      <!-- Cryptographic Storage Inspector Footer -->
+      <div class="mt-4 pt-3 border-t border-zinc-800/80 bg-zinc-950/80 rounded-xl p-3 font-mono-code text-[10px] text-zinc-400">
+        <div class="flex items-center justify-between text-zinc-300 mb-1">
+          <span>CIPHERTEXT PAYLOAD (PREVIEW)</span>
+          <span id="iv-preview" class="text-orange-400">IV: --</span>
+        </div>
+        <div id="ciphertext-preview" class="truncate text-zinc-500 select-all">
+          No encrypted state written yet.
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <script>
+    "use strict";
+
+    /**
+     * ============================================================================
+     * 1. MOCK CAMPUS EVENT DIRECTORY (Dynamic Dates relative to current session)
+     * ============================================================================
+     */
+    const now = Date.now();
+    const HOUR = 3600 * 1000;
+    const DAY = 24 * HOUR;
+
+    const INITIAL_EVENTS = Object.freeze([
+      {
+        id: "evt-moz-01",
+        title: "Rust & WebAssembly Security Jam",
+        category: "Tech",
+        organizer: "Mozilla Campus Club",
+        date: new Date(now + 1 * DAY + 4 * HOUR).toISOString(),
+        location: "Anna Auditorium • Hall B",
+        capacity: "120 Seats",
+        description: "Hands-on memory-safe systems engineering and browser sandboxing with zero-knowledge proofs.",
+        image: "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=900&q=80"
+      },
+      {
+        id: "evt-cul-02",
+        title: "Riviera Unplugged: Indie Night",
+        category: "Cultural",
+        organizer: "Music & Fine Arts Society",
+        date: new Date(now + 2 * DAY + 9 * HOUR).toISOString(),
+        location: "Open Air Theatre (OAT)",
+        capacity: "500 Seats",
+        description: "Acoustic battle of bands under the stars featuring campus indie collectives and solo synth artists.",
+        image: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=900&q=80"
+      },
+      {
+        id: "evt-spt-03",
+        title: "Floodlight 5v5 Futsal Showdown",
+        category: "Sports",
+        organizer: "Varsity Athletics Council",
+        date: new Date(now + 18 * HOUR).toISOString(),
+        location: "Main Turf Arena",
+        capacity: "16 Teams",
+        description: "High-tempo knockout futsal tournament. Bring your squad or join the free-agent draft pool.",
+        image: "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=900&q=80"
+      },
+      {
+        id: "evt-tec-04",
+        title: "Zero-Day CTF & Applied Cryptography",
+        category: "Tech",
+        organizer: "CyberSec SIG",
+        date: new Date(now + 3 * DAY + 12 * HOUR).toISOString(),
+        location: "SJT Lab 402",
+        capacity: "80 Seats",
+        description: "24-hour Capture The Flag sprint covering elliptic-curve cryptography, reverse engineering, and web exploitation.",
+        image: "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=900&q=80"
+      },
+      {
+        id: "evt-wor-05",
+        title: "Golden Hour Street Photography Walk",
+        category: "Workshop",
+        organizer: "Pixel & Lens Collective",
+        date: new Date(now + 4 * DAY + 2 * HOUR).toISOString(),
+        location: "Clock Tower Courtyard",
+        capacity: "35 Spots",
+        description: "Master manual exposure, framing geometry, and raw color grading during a guided golden-hour walk.",
+        image: "https://images.unsplash.com/photo-1516035069371-29a1b244cc32?auto=format&fit=crop&w=900&q=80"
+      },
+      {
+        id: "evt-cul-06",
+        title: "Toastmasters Impromptu Speakeasy",
+        category: "Cultural",
+        organizer: "Toastmasters Chapter",
+        date: new Date(now + 5 * DAY + 6 * HOUR).toISOString(),
+        location: "TT Gallery Hall 2",
+        capacity: "90 Seats",
+        description: "Rapid-fire table topics, humorous storytelling, and high-impact pitch duels with live peer feedback.",
+        image: "https://images.unsplash.com/photo-1475721027785-f74eccf877e2?auto=format&fit=crop&w=900&q=80"
+      },
+      {
+        id: "evt-spt-07",
+        title: "Midnight Blitz Chess Open (3+2)",
+        category: "Sports",
+        organizer: "Checkmate Guild",
+        date: new Date(now + 6 * DAY + 5 * HOUR).toISOString(),
+        location: "Student Activity Center",
+        capacity: "64 Boards",
+        description: "7-round Swiss system FIDE-style blitz tournament. Clocks provided; top 3 take home custom brass sets.",
+        image: "https://images.unsplash.com/photo-1529699211952-734e80c4d42b?auto=format&fit=crop&w=900&q=80"
+      }
+    ]);
+
+    const CATEGORIES = ["All", "Tech", "Cultural", "Sports", "Workshop"];
+
+    /**
+     * ============================================================================
+     * 2. ZERO-TRUST CRYPTOGRAPHIC VAULT (AES-256-GCM + IndexedDB Key + SHA-256)
+     * ============================================================================
+     * - Generates a non-extractable 256-bit AES-GCM CryptoKey inside IndexedDB.
+     * - Encrypts all RSVP state before writing to localStorage.
+     * - Computes a SHA-256 integrity hash to detect payload tampering.
+     */
+    class CryptoVault {
+      constructor() {
+        this.dbName = "CampusPulseKeystoreDB";
+        this.storeName = "CryptoKeys";
+        this.keyId = "master-aes-gcm-256";
+        this.storageKey = "campuspulse_encrypted_vault_v1";
+        this.cryptoKey = null;
+      }
+
+      async init() {
+        this.cryptoKey = await this._loadOrGenerateKey();
+      }
+
+      _openKeyDB() {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open(this.dbName, 1);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(this.storeName)) {
+              db.createObjectStore(this.storeName);
+            }
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      async _loadOrGenerateKey() {
+        const db = await this._openKeyDB();
+        const existingKey = await new Promise((resolve, reject) => {
+          const tx = db.transaction(this.storeName, "readonly");
+          const req = tx.objectStore(this.storeName).get(this.keyId);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+
+        if (existingKey) return existingKey;
+
+        // Generate non-extractable AES-256-GCM hardware/browser key
+        const newKey = await window.crypto.subtle.generateKey(
+          { name: "AES-GCM", length: 256 },
+          false, // non-extractable for XSS key-theft defense
+          ["encrypt", "decrypt"]
+        );
+
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(this.storeName, "readwrite");
+          const req = tx.objectStore(this.storeName).put(newKey, this.keyId);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
+
+        return newKey;
+      }
+
+      _bufToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+      }
+
+      _base64ToBuf(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+      }
+
+      async _sha256Hex(text) {
+        const encoded = new TextEncoder().encode(text);
+        const digest = await window.crypto.subtle.digest("SHA-256", encoded);
+        return Array.from(new Uint8Array(digest))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      }
+
+      async saveState(stateObj) {
+        if (!this.cryptoKey) await this.init();
+        const canonicalJSON = JSON.stringify(stateObj);
+        const checksum = await this._sha256Hex(canonicalJSON);
+        const payload = JSON.stringify({ data: stateObj, checksum, timestamp: Date.now() });
+
+        const iv = window.crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV for AES-GCM
+        const encodedPayload = new TextEncoder().encode(payload);
+
+        const ciphertextBuf = await window.crypto.subtle.encrypt(
+          { name: "AES-GCM", iv },
+          this.cryptoKey,
+          encodedPayload
+        );
+
+        const envelope = {
+          iv: this._bufToBase64(iv),
+          ciphertext: this._bufToBase64(ciphertextBuf)
+        };
+
+        localStorage.setItem(this.storageKey, JSON.stringify(envelope));
+        return {
+          checksum,
+          ivPreview: envelope.iv,
+          cipherPreview: envelope.ciphertext
+        };
+      }
+
+      async loadState() {
+        if (!this.cryptoKey) await this.init();
+        const raw = localStorage.getItem(this.storageKey);
+        if (!raw) return null;
+
+        try {
+          const envelope = JSON.parse(raw);
+          const iv = new Uint8Array(this._base64ToBuf(envelope.iv));
+          const ciphertext = this._base64ToBuf(envelope.ciphertext);
+
+          const decryptedBuf = await window.crypto.subtle.decrypt(
+            { name: "AES-GCM", iv },
+            this.cryptoKey,
+            ciphertext
+          );
+
+          const decoded = JSON.parse(new TextDecoder().decode(decryptedBuf));
+          const recomputedHash = await this._sha256Hex(JSON.stringify(decoded.data));
+
+          if (recomputedHash !== decoded.checksum) {
+            throw new Error("SHA-256 integrity check failed!");
+          }
+
+          return {
+            state: decoded.data,
+            checksum: decoded.checksum,
+            ivPreview: envelope.iv,
+            cipherPreview: envelope.ciphertext
+          };
+        } catch (err) {
+          console.error("[CryptoVault] Tampering or decryption error detected. Resetting vault.", err);
+          localStorage.removeItem(this.storageKey);
+          return null;
+        }
+      }
+
+      async clearVault() {
+        localStorage.removeItem(this.storageKey);
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 3. APPLICATION STATE & CONTROLLER
+     * ============================================================================
+     */
+    const vault = new CryptoVault();
+    const validEventIds = new Set(INITIAL_EVENTS.map((e) => e.id));
+
+    let appState = {
+      decisions: {}, // { [eventId]: 'in' | 'skip' }
+      history: [],   // [{ eventId, action }] for Undo functionality
+      selectedCategory: "All"
+    };
+
+    // DOM References
+    const categoryBar = document.getElementById("category-bar");
+    const cardStack = document.getElementById("card-stack");
+    const rsvpList = document.getElementById("rsvp-list");
+    const rsvpCounter = document.getElementById("rsvp-counter");
+    const deckRemaining = document.getElementById("deck-remaining");
+    const integrityHash = document.getElementById("integrity-hash");
+    const ivPreview = document.getElementById("iv-preview");
+    const ciphertextPreview = document.getElementById("ciphertext-preview");
+    const btnSkip = document.getElementById("btn-skip");
+    const btnUndo = document.getElementById("btn-undo");
+    const btnRsvp = document.getElementById("btn-rsvp");
+    const btnReset = document.getElementById("btn-reset");
+    const tabDeck = document.getElementById("tab-deck");
+    const tabRsvps = document.getElementById("tab-rsvps");
+    const deckSection = document.getElementById("deck-section");
+    const rsvpSection = document.getElementById("rsvp-section");
+
+    // Sanitize & validate decrypted state schema
+    function validateState(rawState) {
+      if (!rawState || typeof rawState !== "object") return false;
+      const cleanDecisions = {};
+      if (rawState.decisions && typeof rawState.decisions === "object") {
+        for (const [k, v] of Object.entries(rawState.decisions)) {
+          if (validEventIds.has(k) && (v === "in" || v === "skip")) {
+            cleanDecisions[k] = v;
+          }
+        }
+      }
+      const cleanHistory = Array.isArray(rawState.history)
+        ? rawState.history.filter(
+            (h) => h && validEventIds.has(h.eventId) && (h.action === "in" || h.action === "skip")
+          )
+        : [];
+
+      appState.decisions = cleanDecisions;
+      appState.history = cleanHistory;
+      return true;
+    }
+
+    async function persistAndRender() {
+      const meta = await vault.saveState({
+        decisions: appState.decisions,
+        history: appState.history
+      });
+      updateCryptoTelemetry(meta);
+      renderAll();
+    }
+
+    function updateCryptoTelemetry(meta) {
+      if (!meta) return;
+      integrityHash.textContent = `SHA256: ${meta.checksum.slice(0, 16)}...`;
+      ivPreview.textContent = `IV: ${meta.ivPreview}`;
+      ciphertextPreview.textContent = meta.cipherPreview;
+    }
+
+    function getFilteredDeck() {
+      return INITIAL_EVENTS.filter((evt) => {
+        const notSwiped = !appState.decisions[evt.id];
+        const matchesCat =
+          appState.selectedCategory === "All" || evt.category === appState.selectedCategory;
+        return notSwiped && matchesCat;
+      });
+    }
+
+    function getRsvpdEvents() {
+      return INITIAL_EVENTS.filter((evt) => appState.decisions[evt.id] === "in");
+    }
+
+    /**
+     * ============================================================================
+     * 4. SAFE DOM RENDERING & COUNTDOWN ENGINE
+     * ============================================================================
+     */
+    function renderCategoryPills() {
+      categoryBar.replaceChildren();
+      CATEGORIES.forEach((cat) => {
+        const btn = document.createElement("button");
+        const isActive = appState.selectedCategory === cat;
+        btn.className = isActive
+          ? "px-3.5 py-1.5 rounded-full text-xs font-mono-code font-bold bg-orange-500 text-zinc-950 shadow transition shrink-0"
+          : "px-3.5 py-1.5 rounded-full text-xs font-mono-code font-medium bg-zinc-900 text-zinc-400 border border-zinc-800 hover:border-zinc-700 hover:text-zinc-200 transition shrink-0";
+        btn.textContent = cat.toUpperCase();
+        btn.addEventListener("click", () => {
+          appState.selectedCategory = cat;
+          renderAll();
+        });
+        categoryBar.appendChild(btn);
+      });
+    }
+
+    function renderDeck() {
+      cardStack.replaceChildren();
+      const deck = getFilteredDeck();
+      deckRemaining.textContent = `REMAINING: ${deck.length}`;
+
+      btnSkip.disabled = deck.length === 0;
+      btnRsvp.disabled = deck.length === 0;
+      btnUndo.disabled = appState.history.length === 0;
+
+      if (deck.length === 0) {
+        const emptyCard = document.createElement("div");
+        emptyCard.className =
+          "w-full h-full rounded-3xl bg-zinc-900/60 border border-dashed border-zinc-800 flex flex-col items-center justify-center p-8 text-center";
+        
+        const icon = document.createElement("div");
+        icon.className = "text-4xl mb-3";
+        icon.textContent = "🎉";
+
+        const title = document.createElement("h3");
+        title.className = "text-lg font-bold text-white";
+        title.textContent = "All Caught Up!";
+
+        const sub = document.createElement("p");
+        sub.className = "text-xs text-zinc-400 mt-1 max-w-xs";
+        sub.textContent =
+          appState.selectedCategory === "All"
+            ? "You've reviewed every event in the directory. Undo your last swipe or reset the vault to start fresh."
+            : `No unswiped events left in "${appState.selectedCategory}". Switch categories above!`;
+
+        emptyCard.append(icon, title, sub);
+        cardStack.appendChild(emptyCard);
+        return;
+      }
+
+      // Render top 3 cards for smooth depth stack
+      const visibleCards = deck.slice(0, 3).reverse();
+      visibleCards.forEach((evt, idx) => {
+        const isTop = idx === visibleCards.length - 1;
+        const stackOffset = visibleCards.length - 1 - idx;
+
+        const card = document.createElement("article");
+        card.className = "swipe-card select-none";
+        card.dataset.id = evt.id;
+        card.style.zIndex = String(10 + idx);
+        card.style.transform = `scale(${1 - stackOffset * 0.045}) translateY(${stackOffset * 14}px)`;
+        card.style.opacity = String(1 - stackOffset * 0.2);
+
+        // Background Image & Gradient Overlay
+        const bgImg = document.createElement("img");
+        bgImg.src = evt.image;
+        bgImg.alt = evt.title;
+        bgImg.draggable = false;
+        bgImg.className = "absolute inset-0 w-full h-full object-cover pointer-events-none";
+
+        const gradient = document.createElement("div");
+        gradient.className =
+          "absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/75 to-transparent pointer-events-none";
+
+        // Decision Stamps
+        const stampIn = document.createElement("div");
+        stampIn.className = "stamp-badge stamp-in";
+        stampIn.textContent = "I'M IN";
+
+        const stampSkip = document.createElement("div");
+        stampSkip.className = "stamp-badge stamp-skip";
+        stampSkip.textContent = "SKIP";
+
+        // Content Block
+        const content = document.createElement("div");
+        content.className = "relative z-20 p-6 flex flex-col gap-2.5";
+
+        const badgeRow = document.createElement("div");
+        badgeRow.className = "flex items-center justify-between gap-2";
+
+        const catBadge = document.createElement("span");
+        catBadge.className =
+          "px-2.5 py-1 rounded-md text-[11px] font-mono-code font-bold uppercase bg-orange-500 text-zinc-950";
+        catBadge.textContent = evt.category;
+
+        const capBadge = document.createElement("span");
+        capBadge.className =
+          "px-2.5 py-1 rounded-md text-[11px] font-mono-code bg-zinc-900/90 text-zinc-300 border border-zinc-700/70";
+        capBadge.textContent = evt.capacity;
+
+        badgeRow.append(catBadge, capBadge);
+
+        const titleEl = document.createElement("h2");
+        titleEl.className = "text-2xl font-extrabold text-white leading-tight";
+        titleEl.textContent = evt.title;
+
+        const orgEl = document.createElement("p");
+        orgEl.className = "text-xs font-mono-code text-orange-400";
+        orgEl.textContent = `By ${evt.organizer}`;
+
+        const descEl = document.createElement("p");
+        descEl.className = "text-xs text-zinc-300 line-clamp-2 leading-relaxed";
+        descEl.textContent = evt.description;
+
+        const metaGrid = document.createElement("div");
+        metaGrid.className =
+          "mt-2 pt-3 border-t border-zinc-800/80 grid grid-cols-2 gap-2 text-xs font-mono-code text-zinc-300";
+
+        const dateBox = document.createElement("div");
+        dateBox.className = "truncate";
+        const formattedDate = new Date(evt.date).toLocaleString("en-IN", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        });
+        dateBox.textContent = `📅 ${formattedDate}`;
+
+        const locBox = document.createElement("div");
+        locBox.className = "truncate text-right";
+        locBox.textContent = `📍 ${evt.location}`;
+
+        metaGrid.append(dateBox, locBox);
+        content.append(badgeRow, titleEl, orgEl, descEl, metaGrid);
+        card.append(bgImg, gradient, stampIn, stampSkip, content);
+
+        if (isTop) {
+          attachSwipePhysics(card, evt.id, stampIn, stampSkip);
+        }
+
+        cardStack.appendChild(card);
+      });
+    }
+
+    function formatCountdown(isoDate) {
+      const diff = new Date(isoDate).getTime() - Date.now();
+      if (diff <= 0) return "LIVE NOW";
+      const d = Math.floor(diff / DAY);
+      const h = Math.floor((diff % DAY) / HOUR);
+      const m = Math.floor((diff % HOUR) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      if (d > 0) return `T-${d}d ${h}h ${m}m ${s}s`;
+      return `T-${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
+    }
+
+    function renderRsvpList() {
+      rsvpList.replaceChildren();
+      const rsvps = getRsvpdEvents();
+      rsvpCounter.textContent = String(rsvps.length);
+
+      if (rsvps.length === 0) {
+        const empty = document.createElement("div");
+        empty.className =
+          "h-full flex flex-col items-center justify-center text-center p-6 text-zinc-500";
+        const p = document.createElement("p");
+        p.className = "text-xs font-mono-code";
+        p.textContent = "No events RSVP'd yet. Swipe right on an event card to lock in your spot!";
+        empty.appendChild(p);
+        rsvpList.appendChild(empty);
+        return;
+      }
+
+      rsvps.forEach((evt) => {
+        const item = document.createElement("div");
+        item.className =
+          "p-3.5 rounded-xl bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 flex flex-col gap-2 transition";
+
+        const topRow = document.createElement("div");
+        topRow.className = "flex items-start justify-between gap-2";
+
+        const title = document.createElement("h4");
+        title.className = "text-sm font-bold text-white leading-snug";
+        title.textContent = evt.title;
+
+        // Countdown Badge
+        const countdown = document.createElement("span");
+        countdown.className =
+          "countdown-badge shrink-0 px-2 py-0.5 rounded text-[11px] font-mono-code font-bold bg-emerald-950 text-emerald-400 border border-emerald-700/60";
+        countdown.dataset.date = evt.date;
+        countdown.textContent = formatCountdown(evt.date);
+
+        topRow.append(title, countdown);
+
+        const bottomRow = document.createElement("div");
+        bottomRow.className = "flex items-center justify-between text-[11px] font-mono-code text-zinc-400";
+
+        const info = document.createElement("span");
+        info.textContent = `${evt.category} • ${evt.location}`;
+
+        const removeBtn = document.createElement("button");
+        removeBtn.className = "text-red-400 hover:underline";
+        removeBtn.textContent = "Cancel";
+        removeBtn.addEventListener("click", async () => {
+          delete appState.decisions[evt.id];
+          appState.history = appState.history.filter((h) => h.eventId !== evt.id);
+          await persistAndRender();
+        });
+
+        bottomRow.append(info, removeBtn);
+        item.append(topRow, bottomRow);
+        rsvpList.appendChild(item);
+      });
+    }
+
+    function renderAll() {
+      renderCategoryPills();
+      renderDeck();
+      renderRsvpList();
+    }
+
+    /**
+     * ============================================================================
+     * 5. SWIPE GESTURE ENGINE & KEYBOARD SHORTCUTS
+     * ============================================================================
+     */
+    function attachSwipePhysics(card, eventId, stampIn, stampSkip) {
+      let startX = 0;
+      let startY = 0;
+      let currentX = 0;
+      let isDragging = false;
+      const SWIPE_THRESHOLD = 105;
+
+      const onPointerDown = (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        card.classList.add("dragging");
+        card.setPointerCapture(e.pointerId);
+      };
+
+      const onPointerMove = (e) => {
+        if (!isDragging) return;
+        currentX = e.clientX - startX;
+        const currentY = (e.clientY - startY) * 0.35;
+        const rotate = currentX * 0.055;
+
+        card.style.transform = `translate3d(${currentX}px, ${currentY}px, 0) rotate(${rotate}deg)`;
+
+        const progress = Math.min(Math.abs(currentX) / SWIPE_THRESHOLD, 1);
+        if (currentX > 20) {
+          stampIn.style.opacity = String(progress);
+          stampSkip.style.opacity = "0";
+        } else if (currentX < -20) {
+          stampSkip.style.opacity = String(progress);
+          stampIn.style.opacity = "0";
+        } else {
+          stampIn.style.opacity = "0";
+          stampSkip.style.opacity = "0";
+        }
+      };
+
+      const onPointerUp = async () => {
+        if (!isDragging) return;
+        isDragging = false;
+        card.classList.remove("dragging");
+
+        if (currentX >= SWIPE_THRESHOLD) {
+          await commitSwipe(eventId, "in", card);
+        } else if (currentX <= -SWIPE_THRESHOLD) {
+          await commitSwipe(eventId, "skip", card);
+        } else {
+          card.style.transform = "scale(1) translateY(0px)";
+          stampIn.style.opacity = "0";
+          stampSkip.style.opacity = "0";
+        }
+        currentX = 0;
+      };
+
+      card.addEventListener("pointerdown", onPointerDown);
+      card.addEventListener("pointermove", onPointerMove);
+      card.addEventListener("pointerup", onPointerUp);
+      card.addEventListener("pointercancel", onPointerUp);
+    }
+
+    async function commitSwipe(eventId, action, cardElement = null) {
+      if (cardElement) {
+        const flyX = action === "in" ? 550 : -550;
+        cardElement.style.transform = `translate3d(${flyX}px, 40px, 0) rotate(${action === "in" ? 22 : -22}deg)`;
+        cardElement.style.opacity = "0";
+        await new Promise((r) => setTimeout(r, 220));
+      }
+
+      appState.decisions[eventId] = action;
+      appState.history.push({ eventId, action });
+      await persistAndRender();
+    }
+
+    async function triggerButtonSwipe(action) {
+      const deck = getFilteredDeck();
+      if (deck.length === 0) return;
+      const topCard = cardStack.lastElementChild;
+      await commitSwipe(deck[0].id, action, topCard);
+    }
+
+    async function undoLastSwipe() {
+      if (appState.history.length === 0) return;
+      const last = appState.history.pop();
+      delete appState.decisions[last.eventId];
+      await persistAndRender();
+    }
+
+    // Button Event Listeners
+    btnSkip.addEventListener("click", () => triggerButtonSwipe("skip"));
+    btnRsvp.addEventListener("click", () => triggerButtonSwipe("in"));
+    btnUndo.addEventListener("click", () => undoLastSwipe());
+
+    btnReset.addEventListener("click", async () => {
+      appState.decisions = {};
+      appState.history = [];
+      appState.selectedCategory = "All";
+      await vault.clearVault();
+      await persistAndRender();
+    });
+
+    // Mobile View Switcher
+    tabDeck.addEventListener("click", () => {
+      deckSection.classList.remove("hidden");
+      tabDeck.className = "px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-orange-500 text-zinc-950 transition";
+      tabRsvps.className = "px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-zinc-900 text-zinc-300 border border-zinc-800 flex items-center gap-1.5 transition";
+    });
+
+    tabRsvps.addEventListener("click", () => {
+      rsvpSection.scrollIntoView({ behavior: "smooth" });
+    });
+
+    // Keyboard Navigation
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        triggerButtonSwipe("in");
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        triggerButtonSwipe("skip");
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undoLastSwipe();
+      }
+    });
+
+    // Live 1-Second Countdown Ticker
+    setInterval(() => {
+      document.querySelectorAll(".countdown-badge").forEach((el) => {
+        if (el.dataset.date) {
+          el.textContent = formatCountdown(el.dataset.date);
+        }
+      });
+    }, 1000);
+
+    // Boot Application
+    (async function boot() {
+      await vault.init();
+      const loaded = await vault.loadState();
+      if (loaded && validateState(loaded.state)) {
+        updateCryptoTelemetry(loaded);
+      } else {
+        await persistAndRender();
+        return;
+      }
+      renderAll();
+    })();
+  </script>
+</body>
+</html>
